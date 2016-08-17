@@ -7,10 +7,10 @@ import:
     move: no
     link: no
     delete: no
-    resume: ask
+    resume: yes
     incremental: no
     quiet_fallback: skip
-    none_rec_action: ask
+    none_rec_action: skip
     timid: no
     log:
     autotag: yes
@@ -42,9 +42,17 @@ asciify_paths: false
 art_filename: cover
 max_filename_length: 0
 
-plugins: []
-pluginpath: []
+plugins: 
+ chroma
+    lastgenre 
+    mbsync 
+    duplicates
+    ftintitle 
+    scrub 
+    zero
+pluginpath: ~/data/beets/plugins
 threaded: yes
+color: yes
 timeout: 5.0
 per_disc_numbering: no
 verbose: 0
@@ -116,10 +124,41 @@ match:
         track_length: 2.0
         track_id: 5.0
     preferred:
-        countries: []
-        media: []
-        original_year: no
+        countries: ['US', 'GB|UK']
+        media: ['CD', 'Digital Media|File']
+        original_year: yes
     ignored: []
     required: []
     track_length_grace: 10
     track_length_max: 30
+threaded: yes
+color: yes
+per_disc_numbering: no
+
+id3v23: yes
+acoustid:
+    apikey: qcFBC05F
+
+# Scrub plugin
+scrub:
+    auto: yes
+ 
+# Embedart plugin
+embedart:
+    auto: yes
+    maxwidth: 1000
+
+# Fetchart plugin
+fetchart:
+    auto: yes
+    remote_priority: true
+ 
+# LastGenre plugin
+lastgenre:
+    #whitelist: ~/data/beets/genres.txt
+    fallback: ''
+    canonical: ''
+
+# Zero plugin
+zero:
+    fields: comments lyrics encoder
