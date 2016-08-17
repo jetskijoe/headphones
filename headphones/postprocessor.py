@@ -928,14 +928,14 @@ def correctMetadata(albumid, release, downloaded_track_list):
             logger.error('Error getting recommendation: %s. Not writing metadata', e)
             return False
         if str(rec) == 'Recommendation.none':
-            logger.warn('No accurate album match found for %s, %s -  not writing metadata',
+            logger.warn('No accurate album match found for %s, %s -  not writing metadata Recommendation.none',
                         release['ArtistName'], release['AlbumTitle'])
             return False
 
         if candidates:
             dist, info, mapping, extra_items, extra_tracks = candidates[0]
         else:
-            logger.warn('No accurate album match found for %s, %s -  not writing metadata',
+            logger.warn('No accurate album match found for %s, %s -  not writing metadata this one is bad',
                         release['ArtistName'], release['AlbumTitle'])
             return False
 
