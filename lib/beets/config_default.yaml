@@ -24,8 +24,8 @@ import:
     pretend: false
     search_ids: []
     duplicate_action: ask
-
-clutter: ["Thumbs.DB", ".DS_Store"]
+# files matching these patterns are deleted from source after import
+clutter: ["Thumbs.DB", ".DS_Store", "*.m3u", ".pls", "*.jpg"]
 ignore: [".*", "*~", "System Volume Information", "lost+found"]
 ignore_hidden: yes
 
@@ -38,25 +38,29 @@ replace:
     '\s+$': ''
     '^\s+': ''
 path_sep_replace: _
-asciify_paths: false
+asciify_paths: true
 art_filename: cover
 max_filename_length: 0
 
-plugins: 
- chroma
-    lastgenre 
-    mbsync 
-    duplicates
-    ftintitle 
-    scrub 
+plugins: [
+    lyrics,
+    fetchart,
+    embedart,
+    chroma,
+    lastgenre, 
+    scrub, 
+    ftintitle,
+    missing,
+    duplicates,
     zero
+]
 pluginpath: ~/data/beets/plugins
 threaded: yes
 color: yes
 timeout: 5.0
 per_disc_numbering: no
 verbose: 0
-terminal_encoding:
+terminal_encoding: utf8
 original_date: no
 id3v23: no
 va_name: "Various Artists"
@@ -74,22 +78,20 @@ ui:
         action_default: turquoise
         action: blue
 
-format_item: $artist - $album - $title
-format_album: $albumartist - $album
+format_item: $albumartist - $album%aunique{} - $track - $title
+format_album: $album%aunique{}
 time_format: '%Y-%m-%d %H:%M:%S'
 format_raw_length: no
 
-sort_album: albumartist+ album+
-sort_item: artist+ album+ disc+ track+
-sort_case_insensitive: yes
+
 
 paths:
-    default: $albumartist/$album%aunique{}/$track $title
+    default: $albumartist/$album%aunique{}/$albumartist - $album%aunique{} - $track - $title
     singleton: Non-Album/$artist/$title
-    comp: Compilations/$album%aunique{}/$track $title
+    comp: Compilations/$album%aunique{}/$track - $title
 
 statefile: state.pickle
-
+id3v23: yes
 musicbrainz:
     host: musicbrainz.org
     ratelimit: 1
@@ -97,12 +99,9 @@ musicbrainz:
     searchlimit: 5
 
 match:
-    strong_rec_thresh: 0.04
+    strong_rec_thresh: 0.1
     medium_rec_thresh: 0.25
     rec_gap_thresh: 0.25
-    max_rec:
-        missing_tracks: medium
-        unmatched_tracks: medium
     distance_weights:
         source: 2.0
         artist: 3.0
@@ -126,16 +125,24 @@ match:
     preferred:
         countries: ['US', 'GB|UK']
         media: ['CD', 'Digital Media|File']
-        original_year: yes
+        original_year: no
     ignored: []
-    required: []
     track_length_grace: 10
     track_length_max: 30
-threaded: yes
-color: yes
-per_disc_numbering: no
 
-id3v23: yes
+
+list_format_item: $artist - $album - $title
+ 
+list_format_album: $albumartist - $album
+
+lyrics:
+    auto: yes
+    fallback: ''
+
+echonest_tempo:
+    auto: yes
+
+ 
 acoustid:
     apikey: qcFBC05F
 
@@ -143,15 +150,16 @@ acoustid:
 scrub:
     auto: yes
  
-# Embedart plugin
+ etchart:
+    auto: yes
+    maxwidth: 300
+    cautious: true
+    cover_names: cover folder
+
 embedart:
     auto: yes
-    maxwidth: 1000
+    maxwidth: 300
 
-# Fetchart plugin
-fetchart:
-    auto: yes
-    remote_priority: true
  
 # LastGenre plugin
 lastgenre:
@@ -162,3 +170,16 @@ lastgenre:
 # Zero plugin
 zero:
     fields: comments lyrics encoder
+    
+missing:
+    format: $albumartist - $album - $track - $title
+    count: no
+    total: no
+
+duplicates:
+    checksum: no  # expensive
+    
+replaygain:
+    auto: yes
+    overwrite: yes
+    albumgain: yes

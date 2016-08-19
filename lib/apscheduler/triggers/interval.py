@@ -9,8 +9,8 @@ from apscheduler.util import convert_to_datetime, timedelta_seconds, datetime_re
 
 class IntervalTrigger(BaseTrigger):
     """
-    Triggers on specified intervals, starting on ``start_date`` if specified, ``datetime.now()`` + interval
-    otherwise.
+    Triggers on specified intervals, starting on ``start_date`` if specified, ``datetime.now()`` +
+    interval otherwise.
 
     :param int weeks: number of weeks to wait
     :param int days: number of days to wait
@@ -22,10 +22,12 @@ class IntervalTrigger(BaseTrigger):
     :param datetime.tzinfo|str timezone: time zone to use for the date/time calculations
     """
 
-    __slots__ = 'timezone', 'start_date', 'end_date', 'interval'
+    __slots__ = 'timezone', 'start_date', 'end_date', 'interval', 'interval_length'
 
-    def __init__(self, weeks=0, days=0, hours=0, minutes=0, seconds=0, start_date=None, end_date=None, timezone=None):
-        self.interval = timedelta(weeks=weeks, days=days, hours=hours, minutes=minutes, seconds=seconds)
+    def __init__(self, weeks=0, days=0, hours=0, minutes=0, seconds=0, start_date=None,
+                 end_date=None, timezone=None):
+        self.interval = timedelta(weeks=weeks, days=days, hours=hours, minutes=minutes,
+                                  seconds=seconds)
         self.interval_length = timedelta_seconds(self.interval)
         if self.interval_length == 0:
             self.interval = timedelta(seconds=1)
@@ -57,9 +59,34 @@ class IntervalTrigger(BaseTrigger):
         if not self.end_date or next_fire_time <= self.end_date:
             return self.timezone.normalize(next_fire_time)
 
+    def __getstate__(self):
+        return {
+            'version': 1,
+            'timezone': self.timezone,
+            'start_date': self.start_date,
+            'end_date': self.end_date,
+            'interval': self.interval
+        }
+
+    def __setstate__(self, state):
+        # This is for compatibility with APScheduler 3.0.x
+        if isinstance(state, tuple):
+            state = state[1]
+
+        if state.get('version', 1) > 1:
+            raise ValueError(
+                'Got serialized data for version %s of %s, but only version 1 can be handled' %
+                (state['version'], self.__class__.__name__))
+
+        self.timezone = state['timezone']
+        self.start_date = state['start_date']
+        self.end_date = state['end_date']
+        self.interval = state['interval']
+        self.interval_length = timedelta_seconds(self.interval)
+
     def __str__(self):
         return 'interval[%s]' % str(self.interval)
 
     def __repr__(self):
-        return "<%s (interval=%r, start_date='%s')>" % (self.__class__.__name__, self.interval,
-                                                        datetime_repr(self.start_date))
+        return "<%s (interval=%r, start_date='%s', timezone='%s')>" % (
+            self.__class__.__name__, self.interval, datetime_repr(self.start_date), self.timezone)

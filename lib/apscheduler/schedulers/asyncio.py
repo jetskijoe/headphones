@@ -10,7 +10,8 @@ except ImportError:  # pragma: nocover
     try:
         import trollius as asyncio
     except ImportError:
-        raise ImportError('AsyncIOScheduler requires either Python 3.4 or the asyncio package installed')
+        raise ImportError(
+            'AsyncIOScheduler requires either Python 3.4 or the asyncio package installed')
 
 
 def run_in_event_loop(func):
@@ -33,10 +34,6 @@ class AsyncIOScheduler(BaseScheduler):
 
     _eventloop = None
     _timeout = None
-
-    def start(self):
-        super(AsyncIOScheduler, self).start()
-        self.wakeup()
 
     @run_in_event_loop
     def shutdown(self, wait=True):
