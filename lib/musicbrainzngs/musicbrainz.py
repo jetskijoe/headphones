@@ -20,6 +20,7 @@ from musicbrainzngs import mbxml
 from musicbrainzngs import util
 from musicbrainzngs import compat
 
+import base64
 _version = "0.7dev"
 _log = logging.getLogger("musicbrainzngs")
 
@@ -295,6 +296,7 @@ user = password = ""
 hostname = "musicbrainz.org"
 _client = ""
 _useragent = ""
+mb_auth = False
 
 def auth(u, p):
 	"""Set the username and password to be used in subsequent queries to
@@ -303,6 +305,21 @@ def auth(u, p):
 	global user, password
 	user = u
 	password = p
+	
+def hpauth(u, p):
+    """Set the username and password to be used in subsequent queries to
+    the MusicBrainz XML API that require authentication.
+    """
+    global hpuser, hppassword, mb_auth
+    hpuser = u
+    hppassword = p
+    mb_auth = True
+
+def disable_hpauth():
+    """Disable the authentication for MusicBrainz XML API
+    """
+    global mb_auth
+    mb_auth = False
 
 def set_useragent(app, version, contact=None):
     """Set the User-Agent to be used for requests to the MusicBrainz webservice.
