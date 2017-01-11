@@ -32,7 +32,10 @@ PIL = 1
 IMAGEMAGICK = 2
 WEBPROXY = 3
 
-PROXY_URL = 'http://images.weserv.nl/'
+if util.SNI_SUPPORTED:
+    PROXY_URL = 'https://images.weserv.nl/'
+else:
+    PROXY_URL = 'http://images.weserv.nl/'
 
 log = logging.getLogger('beets')
 
@@ -91,8 +94,8 @@ def im_resize(maxwidth, path_in, path_out=None):
     # compatibility.
     try:
         util.command_output([
-            b'convert', util.syspath(path_in, prefix=False),
-            b'-resize', b'{0}x^>'.format(maxwidth),
+            'convert', util.syspath(path_in, prefix=False),
+            '-resize', '{0}x^>'.format(maxwidth),
             util.syspath(path_out, prefix=False),
         ])
     except subprocess.CalledProcessError:
@@ -119,7 +122,7 @@ def pil_getsize(path_in):
 
 
 def im_getsize(path_in):
-    cmd = [b'identify', b'-format', b'%w %h',
+    cmd = ['identify', '-format', '%w %h',
            util.syspath(path_in, prefix=False)]
     try:
         out = util.command_output(cmd)
@@ -233,7 +236,7 @@ def get_im_version():
     Try invoking ImageMagick's "convert".
     """
     try:
-        out = util.command_output([b'convert', b'--version'])
+        out = util.command_output(['convert', '--version'])
 
         if b'imagemagick' in out.lower():
             pattern = br".+ (\d+)\.(\d+)\.(\d+).*"

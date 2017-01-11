@@ -22,7 +22,6 @@ from __future__ import division, absolute_import, print_function
 import subprocess
 import platform
 from tempfile import NamedTemporaryFile
-import imghdr
 import os
 
 from beets.util import displayable_path, syspath, bytestring_path
@@ -128,10 +127,10 @@ def check_art_similarity(log, item, imagepath, compare_threshold):
             # to grayscale and then pipe them into the `compare` command.
             # On Windows, ImageMagick doesn't support the magic \\?\ prefix
             # on paths, so we pass `prefix=False` to `syspath`.
-            convert_cmd = [b'convert', syspath(imagepath, prefix=False),
+            convert_cmd = ['convert', syspath(imagepath, prefix=False),
                            syspath(art, prefix=False),
-                           b'-colorspace', b'gray', b'MIFF:-']
-            compare_cmd = [b'compare', b'-metric', b'PHASH', b'-', b'null:']
+                           '-colorspace', 'gray', 'MIFF:-']
+            compare_cmd = ['compare', '-metric', 'PHASH', '-', 'null:']
             log.debug(u'comparing images with pipeline {} | {}',
                       convert_cmd, compare_cmd)
             convert_proc = subprocess.Popen(
@@ -180,7 +179,7 @@ def check_art_similarity(log, item, imagepath, compare_threshold):
                 log.debug(u'IM output is not a number: {0!r}', out_str)
                 return
 
-            log.debug(u'ImageMagick copmare score: {0}', phash_diff)
+            log.debug(u'ImageMagick compare score: {0}', phash_diff)
             return phash_diff <= compare_threshold
 
     return True
@@ -194,7 +193,7 @@ def extract(log, outpath, item):
         return
 
     # Add an extension to the filename.
-    ext = imghdr.what(None, h=art)
+    ext = mediafile.image_extension(art)
     if not ext:
         log.warning(u'Unknown image type in {0}.',
                     displayable_path(item.path))

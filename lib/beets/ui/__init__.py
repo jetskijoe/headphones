@@ -86,7 +86,7 @@ def _out_encoding():
     return _stream_encoding(sys.stdout)
 
 
-def _stream_encoding(stream, default='utf8'):
+def _stream_encoding(stream, default='utf-8'):
     """A helper for `_in_encoding` and `_out_encoding`: get the stream's
     preferred encoding, using a configured override or a default
     fallback if neither is not specified.
@@ -837,7 +837,7 @@ class CommonOptionsParser(optparse.OptionParser, object):
         """
         path = optparse.Option(*flags, nargs=0, action='callback',
                                callback=self._set_format,
-                               callback_kwargs={'fmt': '$path',
+                               callback_kwargs={'fmt': u'$path',
                                                 'store_true': True},
                                help=u'print paths for matched items or albums')
         self.add_option(path)
@@ -1051,48 +1051,12 @@ class SubcommandsOptionParser(CommonOptionsParser):
 optparse.Option.ALWAYS_TYPED_ACTIONS += ('callback',)
 
 
-def vararg_callback(option, opt_str, value, parser):
-    """Callback for an option with variable arguments.
-    Manually collect arguments right of a callback-action
-    option (ie. with action="callback"), and add the resulting
-    list to the destination var.
-
-    Usage:
-    parser.add_option("-c", "--callback", dest="vararg_attr",
-                      action="callback", callback=vararg_callback)
-
-    Details:
-    http://docs.python.org/2/library/optparse.html#callback-example-6-variable
-    -arguments
-    """
-    value = [value]
-
-    def floatable(str):
-        try:
-            float(str)
-            return True
-        except ValueError:
-            return False
-
-    for arg in parser.rargs:
-        # stop on --foo like options
-        if arg[:2] == "--" and len(arg) > 2:
-            break
-        # stop on -a, but not on -3 or -3.0
-        if arg[:1] == "-" and len(arg) > 1 and not floatable(arg):
-            break
-        value.append(arg)
-
-    del parser.rargs[:len(value) - 1]
-    setattr(parser.values, option.dest, value)
-
-
 # The main entry point and bootstrapping.
 
 def _load_plugins(config):
     """Load the plugins specified in the configuration.
     """
-    paths = config['pluginpath'].get(confit.StrSeq(split=False))
+    paths = config['pluginpath'].as_str_seq(split=False)
     paths = [util.normpath(p) for p in paths]
     log.debug(u'plugin paths: {0}', util.displayable_path(paths))
 
@@ -1156,28 +1120,6 @@ def _configure(options):
         log.set_global_level(logging.DEBUG)
     else:
         log.set_global_level(logging.INFO)
-
-    # Ensure compatibility with old (top-level) color configuration.
-    # Deprecation msg to motivate user to switch to config['ui']['color].
-    if config['color'].exists():
-        log.warning(u'Warning: top-level configuration of `color` '
-                    u'is deprecated. Configure color use under `ui`. '
-                    u'See documentation for more info.')
-        config['ui']['color'].set(config['color'].get(bool))
-
-    # Compatibility from list_format_{item,album} to format_{item,album}
-    for elem in ('item', 'album'):
-        old_key = 'list_format_{0}'.format(elem)
-        if config[old_key].exists():
-            new_key = 'format_{0}'.format(elem)
-            log.warning(
-                u'Warning: configuration uses "{0}" which is deprecated'
-                u' in favor of "{1}" now that it affects all commands. '
-                u'See changelog & documentation.',
-                old_key,
-                new_key,
-            )
-            config[new_key].set(config[old_key])
 
     config_path = config.user_config_path()
     if os.path.isfile(config_path):

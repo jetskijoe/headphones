@@ -33,7 +33,7 @@ import re
 import ast
 import dis
 import types
-
+import sys
 import six
 
 SYMBOL_DELIM = u'$'
@@ -105,7 +105,10 @@ def ex_call(func, args):
         if not isinstance(args[i], ast.expr):
             args[i] = ex_literal(args[i])
 
-    return ast.Call(func, args, [], None, None)
+    if sys.version_info[:2] < (3, 5):
+        return ast.Call(func, args, [], None, None)
+    else:
+        return ast.Call(func, args, [])
 
 
 def compile_func(arg_names, statements, name='_the_func', debug=False):
@@ -113,16 +116,31 @@ def compile_func(arg_names, statements, name='_the_func', debug=False):
     the resulting Python function. If `debug`, then print out the
     bytecode of the compiled function.
     """
-    func_def = ast.FunctionDef(
-        name.encode('utf8'),
-        ast.arguments(
-            [ast.Name(n, ast.Param()) for n in arg_names],
-            None, None,
-            [ex_literal(None) for _ in arg_names],
-        ),
-        statements,
-        [],
-    )
+    if six.PY2:
+        func_def = ast.FunctionDef(
+            name=name.encode('utf-8'),
+            args=ast.arguments(
+                args=[ast.Name(n, ast.Param()) for n in arg_names],
+                vararg=None,
+                kwarg=None,
+                defaults=[ex_literal(None) for _ in arg_names],
+            ),
+            body=statements,
+            decorator_list=[],
+        )
+    else:
+        func_def = ast.FunctionDef(
+            name=name,
+            args=ast.arguments(
+                args=[ast.arg(arg=n, annotation=None) for n in arg_names],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[ex_literal(None) for _ in arg_names],
+            ),
+            body=statements,
+            decorator_list=[],
+        )
+
     mod = ast.Module([func_def])
     ast.fix_missing_locations(mod)
 
@@ -164,8 +182,12 @@ class Symbol(object):
 
     def translate(self):
         """Compile the variable lookup."""
-        expr = ex_rvalue(VARIABLE_PREFIX + self.ident.encode('utf8'))
-        return [expr], set([self.ident.encode('utf8')]), set()
+        if six.PY2:
+            ident = self.ident.encode('utf-8')
+        else:
+            ident = self.ident
+        expr = ex_rvalue(VARIABLE_PREFIX + ident)
+        return [expr], set([ident]), set()
 
 
 class Call(object):
@@ -198,7 +220,11 @@ class Call(object):
     def translate(self):
         """Compile the function call."""
         varnames = set()
-        funcnames = set([self.ident.encode('utf8')])
+        if six.PY2:
+            ident = self.ident.encode('utf-8')
+        else:
+            ident = self.ident
+        funcnames = set([ident])
 
         arg_exprs = []
         for arg in self.args:
@@ -213,14 +239,14 @@ class Call(object):
                 [ex_call(
                     'map',
                     [
-                        ex_rvalue('unicode'),
+                        ex_rvalue(six.text_type.__name__),
                         ast.List(subexprs, ast.Load()),
                     ]
                 )],
             ))
 
         subexpr_call = ex_call(
-            FUNCTION_PREFIX + self.ident.encode('utf8'),
+            FUNCTION_PREFIX + ident,
             arg_exprs
         )
         return [subexpr_call], varnames, funcnames
@@ -285,16 +311,24 @@ class Parser(object):
     replaced with a real, accepted parsing technique (PEG, parser
     generator, etc.).
     """
-    def __init__(self, string):
+    def __init__(self, string, in_argument=False):
+        """ Create a new parser.
+        :param in_arguments: boolean that indicates the parser is to be
+        used for parsing function arguments, ie. considering commas
+        (`ARG_SEP`) a special character
+        """
         self.string = string
+        self.in_argument = in_argument
         self.pos = 0
         self.parts = []
 
     # Common parsing resources.
     special_chars = (SYMBOL_DELIM, FUNC_DELIM, GROUP_OPEN, GROUP_CLOSE,
-                     ARG_SEP, ESCAPE_CHAR)
+                     ESCAPE_CHAR)
     special_char_re = re.compile(r'[%s]|$' %
                                  u''.join(re.escape(c) for c in special_chars))
+    escapable_chars = (SYMBOL_DELIM, FUNC_DELIM, GROUP_CLOSE, ARG_SEP)
+    terminator_chars = (GROUP_CLOSE,)
 
     def parse_expression(self):
         """Parse a template expression starting at ``pos``. Resulting
@@ -302,16 +336,26 @@ class Parser(object):
         the ``parts`` field, a list.  The ``pos`` field is updated to be
         the next character after the expression.
         """
+        # Append comma (ARG_SEP) to the list of special characters only when
+        # parsing function arguments.
+        extra_special_chars = ()
+        special_char_re = self.special_char_re
+        if self.in_argument:
+            extra_special_chars = (ARG_SEP,)
+            special_char_re = re.compile(
+                r'[%s]|$' % u''.join(re.escape(c) for c in
+                                     self.special_chars + extra_special_chars))
+
         text_parts = []
 
         while self.pos < len(self.string):
             char = self.string[self.pos]
 
-            if char not in self.special_chars:
+            if char not in self.special_chars + extra_special_chars:
                 # A non-special character. Skip to the next special
                 # character, treating the interstice as literal text.
                 next_pos = (
-                    self.special_char_re.search(
+                    special_char_re.search(
                         self.string[self.pos:]).start() + self.pos
                 )
                 text_parts.append(self.string[self.pos:next_pos])
@@ -322,14 +366,14 @@ class Parser(object):
                 # The last character can never begin a structure, so we
                 # just interpret it as a literal character (unless it
                 # terminates the expression, as with , and }).
-                if char not in (GROUP_CLOSE, ARG_SEP):
+                if char not in self.terminator_chars + extra_special_chars:
                     text_parts.append(char)
                     self.pos += 1
                 break
 
             next_char = self.string[self.pos + 1]
-            if char == ESCAPE_CHAR and next_char in \
-                    (SYMBOL_DELIM, FUNC_DELIM, GROUP_CLOSE, ARG_SEP):
+            if char == ESCAPE_CHAR and next_char in (self.escapable_chars +
+                                                     extra_special_chars):
                 # An escaped special character ($$, $}, etc.). Note that
                 # ${ is not an escape sequence: this is ambiguous with
                 # the start of a symbol and it's not necessary (just
@@ -349,7 +393,7 @@ class Parser(object):
             elif char == FUNC_DELIM:
                 # Parse a function call.
                 self.parse_call()
-            elif char in (GROUP_CLOSE, ARG_SEP):
+            elif char in self.terminator_chars + extra_special_chars:
                 # Template terminated.
                 break
             elif char == GROUP_OPEN:
@@ -457,7 +501,7 @@ class Parser(object):
         expressions = []
 
         while self.pos < len(self.string):
-            subparser = Parser(self.string[self.pos:])
+            subparser = Parser(self.string[self.pos:], in_argument=True)
             subparser.parse_expression()
 
             # Extract and advance past the parsed expression.
@@ -508,8 +552,7 @@ class Template(object):
     def __init__(self, template):
         self.expr = _parse(template)
         self.original = template
-        if six.PY2:  # FIXME Compiler is broken on Python 3.
-            self.compiled = self.translate()
+        self.compiled = self.translate()
 
     def __eq__(self, other):
         return self.original == other.original
@@ -525,13 +568,11 @@ class Template(object):
     def substitute(self, values={}, functions={}):
         """Evaluate the template given the values and functions.
         """
-        if six.PY2:  # FIXME As above.
-            try:
-                res = self.compiled(values, functions)
-            except:  # Handle any exceptions thrown by compiled version.
-                res = self.interpret(values, functions)
-        else:
+        try:
+            res = self.compiled(values, functions)
+        except:  # Handle any exceptions thrown by compiled version.
             res = self.interpret(values, functions)
+
         return res
 
     def translate(self):

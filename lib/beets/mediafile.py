@@ -36,15 +36,11 @@ data from the tags. In turn ``MediaField`` uses a number of
 from __future__ import division, absolute_import, print_function
 
 import mutagen
-import mutagen.mp3
 import mutagen.id3
-import mutagen.oggopus
-import mutagen.oggvorbis
 import mutagen.mp4
 import mutagen.flac
-import mutagen.monkeysaudio
 import mutagen.asf
-import mutagen.aiff
+
 import codecs
 import datetime
 import re
@@ -56,15 +52,13 @@ import imghdr
 import os
 import traceback
 import enum
-
-from beets import logging
-from beets.util import displayable_path, syspath, as_string
+import logging
 import six
 
 
 __all__ = ['UnreadableFileError', 'FileTypeError', 'MediaFile']
 
-log = logging.getLogger('beets')
+log = logging.getLogger(__name__)
 
 # Human-readable type names.
 TYPES = {
@@ -79,7 +73,10 @@ TYPES = {
     'mpc':  'Musepack',
     'asf':  'Windows Media',
     'aiff': 'AIFF',
+    'dsf':  'DSD Stream File',
 }
+
+PREFERRED_IMAGE_EXTENSIONS = {'jpeg': 'jpg'}
 
 
 # Exceptions.
@@ -87,8 +84,8 @@ TYPES = {
 class UnreadableFileError(Exception):
     """Mutagen is not able to extract information from the file.
     """
-    def __init__(self, path):
-        Exception.__init__(self, displayable_path(path))
+    def __init__(self, path, msg):
+        Exception.__init__(self, msg if msg else repr(path))
 
 
 class FileTypeError(UnreadableFileError):
@@ -98,11 +95,10 @@ class FileTypeError(UnreadableFileError):
     mutagen type is not supported by `Mediafile`.
     """
     def __init__(self, path, mutagen_type=None):
-        path = displayable_path(path)
         if mutagen_type is None:
-            msg = path
+            msg = repr(path)
         else:
-            msg = u'{0}: of mutagen type {1}'.format(path, mutagen_type)
+            msg = u'{0}: of mutagen type {1}'.format(repr(path), mutagen_type)
         Exception.__init__(self, msg)
 
 
@@ -110,7 +106,7 @@ class MutagenError(UnreadableFileError):
     """Raised when Mutagen fails unexpectedly---probably due to a bug.
     """
     def __init__(self, path, mutagen_exc):
-        msg = u'{0}: {1}'.format(displayable_path(path), mutagen_exc)
+        msg = u'{0}: {1}'.format(repr(path), mutagen_exc)
         Exception.__init__(self, msg)
 
 
@@ -132,12 +128,12 @@ def mutagen_call(action, path, func, *args, **kwargs):
     try:
         return func(*args, **kwargs)
     except mutagen.MutagenError as exc:
-        log.debug(u'{} failed: {}', action, six.text_type(exc))
-        raise UnreadableFileError(path)
+        log.debug(u'%s failed: %s', action, six.text_type(exc))
+        raise UnreadableFileError(path, six.text_type(exc))
     except Exception as exc:
         # Isolate bugs in Mutagen.
-        log.debug(u'{}', traceback.format_exc())
-        log.error(u'uncaught Mutagen exception in {}: {}', action, exc)
+        log.debug(u'%s', traceback.format_exc())
+        log.error(u'uncaught Mutagen exception in %s: %s', action, exc)
         raise MutagenError(path, exc)
 
 
@@ -176,7 +172,7 @@ def _safe_cast(out_type, val):
 
     elif out_type == six.text_type:
         if isinstance(val, bytes):
-            return val.decode('utf8', 'ignore')
+            return val.decode('utf-8', 'ignore')
         elif isinstance(val, six.text_type):
             return val
         else:
@@ -187,7 +183,7 @@ def _safe_cast(out_type, val):
             return float(val)
         else:
             if isinstance(val, bytes):
-                val = val.decode('utf8', 'ignore')
+                val = val.decode('utf-8', 'ignore')
             else:
                 val = six.text_type(val)
             match = re.match(r'[\+-]?([0-9]+\.?[0-9]*|[0-9]*\.[0-9]+)',
@@ -249,7 +245,7 @@ def _sc_decode(soundcheck):
     # We decode binary data. If one of the formats gives us a text
     # string, interpret it as UTF-8.
     if isinstance(soundcheck, six.text_type):
-        soundcheck = soundcheck.encode('utf8')
+        soundcheck = soundcheck.encode('utf-8')
 
     # SoundCheck tags consist of 10 numbers, each represented by 8
     # characters of ASCII hex preceded by a space.
@@ -308,6 +304,17 @@ def _sc_encode(gain, peak):
 
 
 # Cover art and other images.
+def _imghdr_what_wrapper(data):
+    """A wrapper around imghdr.what to account for jpeg files that can only be
+    identified as such using their magic bytes
+    See #1545
+    See https://github.com/file/file/blob/master/magic/Magdir/jpeg#L12
+    """
+    # imghdr.what returns none for jpegs with only the magic bytes, so
+    # _wider_test_jpeg is run in that case. It still returns None if it didn't
+    # match such a jpeg file.
+    return imghdr.what(None, h=data) or _wider_test_jpeg(data)
+
 
 def _wider_test_jpeg(data):
     """Test for a jpeg file following the UNIX file implementation which
@@ -318,14 +325,14 @@ def _wider_test_jpeg(data):
         return 'jpeg'
 
 
-def _image_mime_type(data):
+def image_mime_type(data):
     """Return the MIME type of the image data (a bytestring).
     """
     # This checks for a jpeg file with only the magic bytes (unrecognized by
     # imghdr.what). imghdr.what returns none for that type of file, so
     # _wider_test_jpeg is run in that case. It still returns None if it didn't
     # match such a jpeg file.
-    kind = imghdr.what(None, h=data) or _wider_test_jpeg(data)
+    kind = _imghdr_what_wrapper(data)
     if kind in ['gif', 'jpeg', 'png', 'tiff', 'bmp']:
         return 'image/{0}'.format(kind)
     elif kind == 'pgm':
@@ -338,6 +345,11 @@ def _image_mime_type(data):
         return 'image/x-xbitmap'
     else:
         return 'image/x-{0}'.format(kind)
+
+
+def image_extension(data):
+    ext = _imghdr_what_wrapper(data)
+    return PREFERRED_IMAGE_EXTENSIONS.get(ext, ext)
 
 
 class ImageType(enum.Enum):
@@ -387,14 +399,14 @@ class Image(object):
             try:
                 type = list(ImageType)[type]
             except IndexError:
-                log.debug(u"ignoring unknown image type index {0}", type)
+                log.debug(u"ignoring unknown image type index %s", type)
                 type = ImageType.other
         self.type = type
 
     @property
     def mime_type(self):
         if self.data:
-            return _image_mime_type(self.data)
+            return image_mime_type(self.data)
 
     @property
     def type_index(self):
@@ -460,7 +472,7 @@ class StorageStyle(object):
         # Convert suffix to correct string type.
         if self.suffix and self.as_type is six.text_type \
            and not isinstance(self.suffix, six.text_type):
-            self.suffix = self.suffix.decode('utf8')
+            self.suffix = self.suffix.decode('utf-8')
 
     # Getter.
 
@@ -512,7 +524,7 @@ class StorageStyle(object):
                 # Store bools as 1/0 instead of True/False.
                 value = six.text_type(int(bool(value)))
             elif isinstance(value, bytes):
-                value = value.decode('utf8', 'ignore')
+                value = value.decode('utf-8', 'ignore')
             else:
                 value = six.text_type(value)
         else:
@@ -625,7 +637,7 @@ class MP4StorageStyle(StorageStyle):
     def serialize(self, value):
         value = super(MP4StorageStyle, self).serialize(value)
         if self.key.startswith('----:') and isinstance(value, six.text_type):
-            value = value.encode('utf8')
+            value = value.encode('utf-8')
         return value
 
 
@@ -717,7 +729,7 @@ class MP4ImageStorageStyle(MP4ListStorageStyle):
 class MP3StorageStyle(StorageStyle):
     """Store data in ID3 frames.
     """
-    formats = ['MP3', 'AIFF']
+    formats = ['MP3', 'AIFF', 'DSF']
 
     def __init__(self, key, id3_lang=None, **kwargs):
         """Create a new ID3 storage style. `id3_lang` is the value for
@@ -735,6 +747,43 @@ class MP3StorageStyle(StorageStyle):
     def store(self, mutagen_file, value):
         frame = mutagen.id3.Frames[self.key](encoding=3, text=[value])
         mutagen_file.tags.setall(self.key, [frame])
+
+
+class MP3PeopleStorageStyle(MP3StorageStyle):
+    """Store list of people in ID3 frames.
+    """
+    def __init__(self, key, involvement='', **kwargs):
+        self.involvement = involvement
+        super(MP3PeopleStorageStyle, self).__init__(key, **kwargs)
+
+    def store(self, mutagen_file, value):
+        frames = mutagen_file.tags.getall(self.key)
+
+        # Try modifying in place.
+        found = False
+        for frame in frames:
+            if frame.encoding == mutagen.id3.Encoding.UTF8:
+                for pair in frame.people:
+                    if pair[0].lower() == self.involvement.lower():
+                        pair[1] = value
+                        found = True
+
+        # Try creating a new frame.
+        if not found:
+            frame = mutagen.id3.Frames[self.key](
+                encoding=mutagen.id3.Encoding.UTF8,
+                people=[[self.involvement, value]]
+            )
+            mutagen_file.tags.add(frame)
+
+    def fetch(self, mutagen_file):
+        for frame in mutagen_file.tags.getall(self.key):
+            for pair in frame.people:
+                if pair[0].lower() == self.involvement.lower():
+                    try:
+                        return pair[1]
+                    except IndexError:
+                        return None
 
 
 class MP3ListStorageStyle(ListStorageStyle, MP3StorageStyle):
@@ -767,7 +816,7 @@ class MP3UFIDStorageStyle(MP3StorageStyle):
     def store(self, mutagen_file, value):
         # This field type stores text data as encoded data.
         assert isinstance(value, six.text_type)
-        value = value.encode('utf8')
+        value = value.encode('utf-8')
 
         frames = mutagen_file.tags.getall(self.key)
         for frame in frames:
@@ -902,7 +951,16 @@ class MP3ImageStorageStyle(ListStorageStyle, MP3StorageStyle):
         frame.data = image.data
         frame.mime = image.mime_type
         frame.desc = image.desc or u''
-        frame.encoding = 3  # UTF-8 encoding of desc
+
+        # For compatibility with OS X/iTunes prefer latin-1 if possible.
+        # See issue #899
+        try:
+            frame.desc.encode("latin-1")
+        except UnicodeEncodeError:
+            frame.encoding = mutagen.id3.Encoding.UTF16
+        else:
+            frame.encoding = mutagen.id3.Encoding.LATIN1
+
         frame.type = image.type_index
         return frame
 
@@ -1067,7 +1125,7 @@ class APEv2ImageStorageStyle(ListStorageStyle):
                 text_delimiter_index = frame.value.find(b'\x00')
                 if text_delimiter_index > 0:
                     comment = frame.value[0:text_delimiter_index]
-                    comment = comment.decode('utf8', 'replace')
+                    comment = comment.decode('utf-8', 'replace')
                 else:
                     comment = None
                 image_data = frame.value[text_delimiter_index + 1:]
@@ -1084,7 +1142,7 @@ class APEv2ImageStorageStyle(ListStorageStyle):
         for image in values:
             image_type = image.type or ImageType.other
             comment = image.desc or ''
-            image_data = comment.encode('utf8') + b'\x00' + image.data
+            image_data = comment.encode('utf-8') + b'\x00' + image.data
             cover_tag = self.TAG_NAMES[image_type]
             mutagen_file[cover_tag] = image_data
 
@@ -1385,7 +1443,6 @@ class MediaFile(object):
         By default, MP3 files are saved with ID3v2.4 tags. You can use
         the older ID3v2.3 standard by specifying the `id3v23` option.
         """
-        path = syspath(path)
         self.path = path
 
         self.mgfile = mutagen_call('open', path, mutagen.File, path)
@@ -1419,6 +1476,8 @@ class MediaFile(object):
             self.type = 'asf'
         elif type(self.mgfile).__name__ == 'AIFF':
             self.type = 'aiff'
+        elif type(self.mgfile).__name__ == 'DSF':
+            self.type = 'dsf'
         else:
             raise FileTypeError(path, type(self.mgfile).__name__)
 
@@ -1461,7 +1520,12 @@ class MediaFile(object):
         """
         for property, descriptor in cls.__dict__.items():
             if isinstance(descriptor, MediaField):
-                yield as_string(property)
+                if isinstance(property, bytes):
+                    # On Python 2, class field names are bytes. This method
+                    # produces text strings.
+                    yield property.decode('utf8', 'ignore')
+                else:
+                    yield property
 
     @classmethod
     def _field_sort_name(cls, name):
@@ -1562,12 +1626,25 @@ class MediaFile(object):
     )
     genre = genres.single_field()
 
+    lyricist = MediaField(
+        MP3StorageStyle('TEXT'),
+        MP4StorageStyle('----:com.apple.iTunes:LYRICIST'),
+        StorageStyle('LYRICIST'),
+        ASFStorageStyle('WM/Writer'),
+    )
     composer = MediaField(
         MP3StorageStyle('TCOM'),
         MP4StorageStyle('\xa9wrt'),
         StorageStyle('COMPOSER'),
         ASFStorageStyle('WM/Composer'),
     )
+    arranger = MediaField(
+        MP3PeopleStorageStyle('TIPL', involvement='arranger'),
+        MP4StorageStyle('----:com.apple.iTunes:Arranger'),
+        StorageStyle('ARRANGER'),
+        ASFStorageStyle('beets/Arranger'),
+    )
+
     grouping = MediaField(
         MP3StorageStyle('TIT1'),
         MP4StorageStyle('\xa9grp'),

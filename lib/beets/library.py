@@ -23,7 +23,6 @@ import unicodedata
 import time
 import re
 import six
-from unidecode import unidecode
 
 from beets import logging
 from beets.mediafile import MediaFile, UnreadableFileError
@@ -56,9 +55,6 @@ class PathQuery(dbcore.FieldQuery):
     default, the behavior depends on the OS: case-insensitive on Windows
     and case-sensitive otherwise.
     """
-
-    escape_re = re.compile(br'[\\_%]')
-    escape_char = b'\\'
 
     def __init__(self, field, pattern, fast=True, case_sensitive=None):
         """Create a path query. `pattern` must be a path, either to a
@@ -108,20 +104,17 @@ class PathQuery(dbcore.FieldQuery):
         return (path == self.file_path) or path.startswith(self.dir_path)
 
     def col_clause(self):
-        if self.case_sensitive:
-            file_blob = BLOB_TYPE(self.file_path)
-            dir_blob = BLOB_TYPE(self.dir_path)
-            return '({0} = ?) || (substr({0}, 1, ?) = ?)'.format(self.field), \
-                   (file_blob, len(dir_blob), dir_blob)
+        file_blob = BLOB_TYPE(self.file_path)
+        dir_blob = BLOB_TYPE(self.dir_path)
 
-        escape = lambda m: self.escape_char + m.group(0)
-        dir_pattern = self.escape_re.sub(escape, self.dir_path)
-        dir_blob = BLOB_TYPE(dir_pattern + b'%')
-        file_pattern = self.escape_re.sub(escape, self.file_path)
-        file_blob = BLOB_TYPE(file_pattern)
-        return '({0} LIKE ? ESCAPE ?) || ({0} LIKE ? ESCAPE ?)'.format(
-            self.field), (file_blob, self.escape_char, dir_blob,
-                          self.escape_char)
+        if self.case_sensitive:
+            query_part = '({0} = ?) || (substr({0}, 1, ?) = ?)'
+        else:
+            query_part = '(BYTELOWER({0}) = BYTELOWER(?)) || \
+                         (substr(BYTELOWER({0}), 1, ?) = BYTELOWER(?))'
+
+        return query_part.format(self.field), \
+            (file_blob, len(dir_blob), dir_blob)
 
 
 # Library-specific field types.
@@ -329,8 +322,8 @@ class LibModel(dbcore.Model):
         funcs.update(plugins.template_funcs())
         return funcs
 
-    def store(self):
-        super(LibModel, self).store()
+    def store(self, fields=None):
+        super(LibModel, self).store(fields)
         plugins.send('database_change', lib=self._db, model=self)
 
     def remove(self):
@@ -344,12 +337,8 @@ class LibModel(dbcore.Model):
     def __format__(self, spec):
         if not spec:
             spec = beets.config[self._format_config_key].as_str()
-        result = self.evaluate_template(spec)
-        if isinstance(spec, bytes):
-            # if spec is a byte string then we must return a one as well
-            return result.encode('utf8')
-        else:
-            return result
+        assert isinstance(spec, six.text_type)
+        return self.evaluate_template(spec)
 
     def __str__(self):
         return format(self)
@@ -426,7 +415,9 @@ class Item(LibModel):
         'albumartist_sort':     types.STRING,
         'albumartist_credit':   types.STRING,
         'genre':                types.STRING,
+        'lyricist':             types.STRING,
         'composer':             types.STRING,
+        'arranger':             types.STRING,
         'grouping':             types.STRING,
         'year':                 types.PaddedInt(4),
         'month':                types.PaddedInt(2),
@@ -739,7 +730,8 @@ class Item(LibModel):
 
         self._db._memotable = {}
 
-    def move(self, copy=False, link=False, basedir=None, with_album=True):
+    def move(self, copy=False, link=False, basedir=None, with_album=True,
+             store=True):
         """Move the item to its designated location within the library
         directory (provided by destination()). Subdirectories are
         created as needed. If the operation succeeds, the item's path
@@ -755,10 +747,11 @@ class Item(LibModel):
         move its art. (This can be disabled by passing
         with_album=False.)
 
-        The item is stored to the database if it is in the database, so
-        any dirty fields prior to the move() call will be written as a
-        side effect. You probably want to call save() to commit the DB
-        transaction.
+        By default, the item is stored to the database if it is in the
+        database, so any dirty fields prior to the move() call will be written
+        as a side effect. You probably want to call save() to commit the DB
+        transaction. If `store` is true however, the item won't be stored, and
+        you'll have to manually store it after invoking this method.
         """
         self._check_db()
         dest = self.destination(basedir=basedir)
@@ -769,14 +762,16 @@ class Item(LibModel):
         # Perform the move and store the change.
         old_path = self.path
         self.move_file(dest, copy, link)
-        self.store()
+        if store:
+            self.store()
 
         # If this item is in an album, move its art.
         if with_album:
             album = self.get_album()
             if album:
                 album.move_art(copy)
-                album.store()
+                if store:
+                    album.store()
 
         # Prune vacated directory.
         if not copy:
@@ -830,7 +825,10 @@ class Item(LibModel):
             subpath = unicodedata.normalize('NFC', subpath)
 
         if beets.config['asciify_paths']:
-            subpath = unidecode(subpath)
+            subpath = util.asciify_path(
+                subpath,
+                beets.config['path_sep_replace'].as_str()
+            )
 
         maxlen = beets.config['max_filename_length'].get(int)
         if not maxlen:
@@ -1010,26 +1008,31 @@ class Album(LibModel):
             util.prune_dirs(os.path.dirname(old_art),
                             self._db.directory)
 
-    def move(self, copy=False, link=False, basedir=None):
+    def move(self, copy=False, link=False, basedir=None, store=True):
         """Moves (or copies) all items to their destination. Any album
         art moves along with them. basedir overrides the library base
-        directory for the destination. The album is stored to the
-        database, persisting any modifications to its metadata.
+        directory for the destination. By default, the album is stored to the
+        database, persisting any modifications to its metadata. If `store` is
+        true however, the album is not stored automatically, and you'll have
+        to manually store it after invoking this method.
         """
         basedir = basedir or self._db.directory
 
         # Ensure new metadata is available to items for destination
         # computation.
-        self.store()
+        if store:
+            self.store()
 
         # Move items.
         items = list(self.items())
         for item in items:
-            item.move(copy, link, basedir=basedir, with_album=False)
+            item.move(copy, link, basedir=basedir, with_album=False,
+                      store=store)
 
         # Move art.
         self.move_art(copy, link)
-        self.store()
+        if store:
+            self.store()
 
     def item_dir(self):
         """Returns the directory containing the album's first item,
@@ -1077,7 +1080,10 @@ class Album(LibModel):
             beets.config['art_filename'].as_str())
         subpath = self.evaluate_template(filename_tmpl, True)
         if beets.config['asciify_paths']:
-            subpath = unidecode(subpath)
+            subpath = util.asciify_path(
+                subpath,
+                beets.config['path_sep_replace'].as_str()
+            )
         subpath = util.sanitize_path(subpath,
                                      replacements=self._db.replacements)
         subpath = bytestring_path(subpath)
@@ -1118,9 +1124,11 @@ class Album(LibModel):
 
         plugins.send('art_set', album=self)
 
-    def store(self):
+    def store(self, fields=None):
         """Update the database with the album information. The album's
         tracks are also updated.
+        :param fields: The fields to be stored. If not specified, all fields
+        will be.
         """
         # Get modified track fields.
         track_updates = {}
@@ -1129,7 +1137,7 @@ class Album(LibModel):
                 track_updates[key] = self[key]
 
         with self._db.transaction():
-            super(Album, self).store()
+            super(Album, self).store(fields)
             if track_updates:
                 for item in self.items():
                     for key, value in track_updates.items():
@@ -1201,6 +1209,19 @@ def parse_query_string(s, model_cls):
     return parse_query_parts(parts, model_cls)
 
 
+def _sqlite_bytelower(bytestring):
+    """ A custom ``bytelower`` sqlite function so we can compare
+        bytestrings in a semi case insensitive fashion.  This is to work
+        around sqlite builds are that compiled with
+        ``-DSQLITE_LIKE_DOESNT_MATCH_BLOBS``. See
+        ``https://github.com/beetbox/beets/issues/2172`` for details.
+    """
+    if not six.PY2:
+        return bytestring.lower()
+
+    return buffer(bytes(bytestring).lower())  # noqa: F821
+
+
 # The Library: interface to the database.
 
 class Library(dbcore.Database):
@@ -1213,7 +1234,10 @@ class Library(dbcore.Database):
                  path_formats=((PF_KEY_DEFAULT,
                                '$artist/$album/$track $title'),),
                  replacements=None):
-        super(Library, self).__init__(path)
+        timeout = beets.config['timeout'].as_number()
+        super(Library, self).__init__(path, timeout=timeout)
+
+        self._connection().create_function('bytelower', 1, _sqlite_bytelower)
 
         self.directory = bytestring_path(normpath(directory))
         self.path_formats = path_formats
@@ -1411,7 +1435,7 @@ class DefaultTemplateFunctions(object):
     def tmpl_asciify(s):
         """Translate non-ASCII characters to their ASCII equivalents.
         """
-        return unidecode(s)
+        return util.asciify_path(s, beets.config['path_sep_replace'].as_str())
 
     @staticmethod
     def tmpl_time(s, fmt):

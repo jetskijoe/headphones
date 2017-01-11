@@ -68,7 +68,7 @@ class FormattedMapping(collections.Mapping):
     def _get_formatted(self, model, key):
         value = model._type(key).format(model.get(key))
         if isinstance(value, bytes):
-            value = value.decode('utf8', 'ignore')
+            value = value.decode('utf-8', 'ignore')
 
         if self.for_path:
             sep_repl = beets.config['path_sep_replace'].as_str()
@@ -342,15 +342,19 @@ class Model(object):
 
     # Database interaction (CRUD methods).
 
-    def store(self):
+    def store(self, fields=None):
         """Save the object's metadata into the library database.
+        :param fields: the fields to be stored. If not specified, all fields
+        will be.
         """
+        if fields is None:
+            fields = self._fields
         self._check_db()
 
         # Build assignments for query.
         assignments = []
         subvars = []
-        for key in self._fields:
+        for key in fields:
             if key != 'id' and key in self._dirty:
                 self._dirty.remove(key)
                 assignments.append(key + '=?')
@@ -692,8 +696,9 @@ class Database(object):
     """The Model subclasses representing tables in this database.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, timeout=5.0):
         self.path = path
+        self.timeout = timeout
 
         self._connections = {}
         self._tx_stacks = defaultdict(list)
@@ -732,8 +737,7 @@ class Database(object):
                 # bytestring paths here on Python 3, so we need to
                 # provide a `str` using `py3_path`.
                 conn = sqlite3.connect(
-                    py3_path(self.path),
-                    timeout=beets.config['timeout'].as_number(),
+                    py3_path(self.path), timeout=self.timeout
                 )
 
                 # Access SELECT results like dictionaries.

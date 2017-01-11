@@ -252,7 +252,7 @@ class BytesQuery(MatchQuery):
         # rather than encoded Unicode.
         if isinstance(self.pattern, (six.text_type, bytes)):
             if isinstance(self.pattern, six.text_type):
-                self.pattern = self.pattern.encode('utf8')
+                self.pattern = self.pattern.encode('utf-8')
             self.buf_pattern = buffer(self.pattern)
         elif isinstance(self.pattern, buffer):
             self.buf_pattern = self.pattern
@@ -503,9 +503,13 @@ def _to_epoch_time(date):
     """Convert a `datetime` object to an integer number of seconds since
     the (local) Unix epoch.
     """
-    epoch = datetime.fromtimestamp(0)
-    delta = date - epoch
-    return int(delta.total_seconds())
+    if hasattr(date, 'timestamp'):
+        # The `timestamp` method exists on Python 3.3+.
+        return int(date.timestamp())
+    else:
+        epoch = datetime.fromtimestamp(0)
+        delta = date - epoch
+        return int(delta.total_seconds())
 
 
 def _parse_periods(pattern):
@@ -628,6 +632,8 @@ class DateQuery(FieldQuery):
         self.interval = DateInterval.from_periods(start, end)
 
     def match(self, item):
+        if self.field not in item:
+            return False
         timestamp = float(item[self.field])
         date = datetime.utcfromtimestamp(timestamp)
         return self.interval.contains(date)

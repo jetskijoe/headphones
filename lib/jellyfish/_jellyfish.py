@@ -1,6 +1,6 @@
 import unicodedata
 from collections import defaultdict
-from .compat import _range, _zip_longest, _no_bytes_err
+from .compat import _range, _zip_longest, IS_PY3
 from .porter import Stemmer
 
 
@@ -8,9 +8,16 @@ def _normalize(s):
     return unicodedata.normalize('NFKD', s)
 
 
+def _check_type(s):
+    if IS_PY3 and not isinstance(s, str):
+        raise TypeError('expected str or unicode, got %s' % type(s).__name__)
+    elif not IS_PY3 and not isinstance(s, unicode):
+        raise TypeError('expected unicode, got %s' % type(s).__name__)
+
+
 def levenshtein_distance(s1, s2):
-    if isinstance(s1, bytes) or isinstance(s2, bytes):
-        raise TypeError(_no_bytes_err)
+    _check_type(s1)
+    _check_type(s2)
 
     if s1 == s2:
         return 0
@@ -36,8 +43,8 @@ def levenshtein_distance(s1, s2):
 
 
 def _jaro_winkler(ying, yang, long_tolerance, winklerize):
-    if isinstance(ying, bytes) or isinstance(yang, bytes):
-        raise TypeError(_no_bytes_err)
+    _check_type(ying)
+    _check_type(yang)
 
     ying_len = len(ying)
     yang_len = len(yang)
@@ -106,8 +113,8 @@ def _jaro_winkler(ying, yang, long_tolerance, winklerize):
 
 
 def damerau_levenshtein_distance(s1, s2):
-    if isinstance(s1, bytes) or isinstance(s2, bytes):
-        raise TypeError(_no_bytes_err)
+    _check_type(s1)
+    _check_type(s2)
 
     len1 = len(s1)
     len2 = len(s2)
@@ -157,23 +164,24 @@ def jaro_winkler(s1, s2, long_tolerance=False):
 def soundex(s):
     if not s:
         return s
-    if isinstance(s, bytes):
-        raise TypeError(_no_bytes_err)
+
+    _check_type(s)
 
     s = _normalize(s)
+    s = s.upper()
 
-    replacements = (('bfpv', '1'),
-                    ('cgjkqsxz', '2'),
-                    ('dt', '3'),
-                    ('l', '4'),
-                    ('mn', '5'),
-                    ('r', '6'))
+    replacements = (('BFPV', '1'),
+                    ('CGJKQSXZ', '2'),
+                    ('DT', '3'),
+                    ('L', '4'),
+                    ('MN', '5'),
+                    ('R', '6'))
     result = [s[0]]
     count = 1
 
     # find would-be replacment for first character
     for lset, sub in replacements:
-        if s[0].lower() in lset:
+        if s[0] in lset:
             last = sub
             break
     else:
@@ -181,7 +189,7 @@ def soundex(s):
 
     for letter in s[1:]:
         for lset, sub in replacements:
-            if letter.lower() in lset:
+            if letter in lset:
                 if sub != last:
                     result.append(sub)
                     count += 1
@@ -197,8 +205,8 @@ def soundex(s):
 
 
 def hamming_distance(s1, s2):
-    if isinstance(s1, bytes) or isinstance(s2, bytes):
-        raise TypeError(_no_bytes_err)
+    _check_type(s1)
+    _check_type(s2)
 
     # ensure length of s1 >= s2
     if len(s2) > len(s1):
@@ -214,10 +222,10 @@ def hamming_distance(s1, s2):
 
 
 def nysiis(s):
-    if isinstance(s, bytes):
-        raise TypeError(_no_bytes_err)
     if not s:
         return ''
+
+    _check_type(s)
 
     s = s.upper()
     key = []
@@ -303,8 +311,8 @@ def nysiis(s):
 
 
 def match_rating_codex(s):
-    if isinstance(s, bytes):
-        raise TypeError(_no_bytes_err)
+    _check_type(s)
+
     s = s.upper()
     codex = []
 
@@ -368,8 +376,7 @@ def match_rating_comparison(s1, s2):
 
 
 def metaphone(s):
-    if isinstance(s, bytes):
-        raise TypeError(_no_bytes_err)
+    _check_type(s)
 
     result = []
 
@@ -483,6 +490,6 @@ def metaphone(s):
 
 
 def porter_stem(s):
-    if isinstance(s, bytes):
-        raise TypeError(_no_bytes_err)
+    _check_type(s)
+
     return Stemmer(s).stem()
