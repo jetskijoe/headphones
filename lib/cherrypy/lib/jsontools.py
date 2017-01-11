@@ -1,15 +1,17 @@
 import cherrypy
-from cherrypy._cpcompat import text_or_bytes, ntou, json_encode, json_decode
+from cherrypy._cpcompat import basestring, ntou, json_encode, json_decode
 
 
 def json_processor(entity):
     """Read application/json data into request.json."""
-    if not entity.headers.get(ntou('Content-Length'), ntou('')):
+    if not entity.headers.get(ntou("Content-Length"), ntou("")):
         raise cherrypy.HTTPError(411)
 
     body = entity.fp.read()
-    with cherrypy.HTTPError.handle(ValueError, 400, 'Invalid JSON document'):
+    try:
         cherrypy.serving.request.json = json_decode(body.decode('utf-8'))
+    except ValueError:
+        raise cherrypy.HTTPError(400, 'Invalid JSON document')
 
 
 def json_in(content_type=[ntou('application/json'), ntou('text/javascript')],
@@ -39,7 +41,7 @@ def json_in(content_type=[ntou('application/json'), ntou('text/javascript')],
     package importable; otherwise, ValueError is raised during processing.
     """
     request = cherrypy.serving.request
-    if isinstance(content_type, text_or_bytes):
+    if isinstance(content_type, basestring):
         content_type = [content_type]
 
     if force:
